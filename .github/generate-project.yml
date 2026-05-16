@@ -1,1 +1,150 @@
+name: 🚀 DACM Generate Flutter Project
 
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: '📁 Nama Project Folder'
+        required: true
+        type: string
+      package_name:
+        description: '📦 Package Name (com.nama.app)'
+        required: true
+        type: string
+      app_name:
+        description: '📱 Nama Aplikasi'
+        required: true
+        type: string
+      primary_color:
+        description: '🎨 Primary Color'
+        required: true
+        type: string
+        default: '0xFF667EEA'
+
+permissions: { contents: write }
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    env:
+      PROJ: ${{ github.event.inputs.project_name }}
+      PKG: ${{ github.event.inputs.package_name }}
+      APP: ${{ github.event.inputs.app_name }}
+      COLOR: ${{ github.event.inputs.primary_color }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, flutter-version: '3.24.3', cache: true }
+
+      - name: 🏗️ Generate Flutter Project
+        run: |
+          ORG=$(echo "$PKG" | sed 's/\.[^.]*$//')
+          PROJ_NAME=$(echo "$PKG" | awk -F. '{print $NF}')
+          
+          flutter create --platforms=android,web --project-name="$PROJ_NAME" --org "$ORG" "$PROJ"
+          cd "$PROJ"
+
+          cat > pubspec.yaml <<EOF
+          name: $PROJ_NAME
+          description: $APP
+          publish_to: 'none'
+          version: 1.0.0+1
+          environment:
+            sdk: '>=3.0.0 <4.0.0'
+          dependencies:
+            flutter: { sdk: flutter }
+            cupertino_icons: ^1.0.6
+          dev_dependencies:
+            flutter_test: { sdk: flutter }
+            flutter_lints: ^4.0.0
+          flutter:
+            uses-material-design: true
+          EOF
+
+          cat > lib/main.dart <<'DART'
+          import 'package:flutter/material.dart';
+
+          void main() {
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'My App',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: Color(__COLOR__),
+                    useMaterial3: true,
+                  ),
+                ),
+                home: const HomePage(),
+              );
+            }
+          }
+
+          class HomePage extends StatefulWidget {
+            const HomePage({super.key});
+
+            @override
+            State<HomePage> createState() => _HomePageState();
+          }
+
+          class _HomePageState extends State<HomePage> {
+            int _counter = 0;
+
+            void _incrementCounter() {
+              setState(() {
+                _counter++;
+              });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+                  title: const Text('My App'),
+                ),
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      const Text('You have pushed the button this many times:'),
+                      Text(
+                        '$_counter',
+                        style: Theme.of(context).textTheme.headlineMedium,
+                      ),
+                    ],
+                  ),
+                ),
+                floatingActionButton: FloatingActionButton(
+                  onPressed: _incrementCounter,
+                  tooltip: 'Increment',
+                  child: const Icon(Icons.add),
+                ),
+              );
+            }
+          }
+          DART
+
+          sed -i "s|__COLOR__|$COLOR|g" lib/main.dart
+
+      - name: 📦 ZIP Project
+        run: |
+          zip -r "${PROJ}-source.zip" "$PROJ"
+
+      - name: 🚀 Release Source ZIP
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: project-${{ github.run_number }}
+          name: "📁 $PROJ Source"
+          files: "${PROJ}-source.zip"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
