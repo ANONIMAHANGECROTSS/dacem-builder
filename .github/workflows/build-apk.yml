@@ -1,72 +1,68 @@
-name: 🚀 DACM Build APK Engine
+name: 🚀 DACM Build APK from Source
 
 on:
   workflow_dispatch:
     inputs:
       source_url:
-        description: '📦 URL ZIP Source'
+        description: '📦 URL ZIP Source Project'
         required: true
         type: string
       project_name:
-        description: '📁 Nama Project'
+        description: '📁 Nama Project Folder (di dalam ZIP)'
         required: true
         type: string
 
-permissions: { contents: write }
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: 'temurin', java-version: '17' }
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, flutter-version: '3.24.3' }
-
-      - name: 📥 Download & Auto-Fix Structure
-        run: |
-          # Download dengan timeout dan retry
-          curl -L -o source.zip "${{ github.event.inputs.source_url }}"
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
           
-          # Cek validitas zip
-          if ! unzip -t source.zip; then echo "❌ INVALID ZIP FILE"; exit 1; fi
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
           
-          unzip source.zip -d raw_extract
-          
-          # Cari di mana letak pubspec.yaml (Auto-Fixer)
-          REAL_PATH=$(find raw_extract -name "pubspec.yaml" -exec dirname {} \; | head -n 1)
-          
-          if [ -z "$REAL_PATH" ]; then echo "❌ PUBSPEC NOT FOUND"; exit 1; fi
-          
-          # Pindahin ke folder kerja bersih
-          mkdir project_workdir
-          cp -r "$REAL_PATH"/* project_workdir/
-          echo "WORK_DIR=project_workdir" >> $GITHUB_ENV
-
-      - name: 🤖 Setup Android SDK
+      - name: Setup Android SDK
         run: |
           mkdir -p $HOME/android-sdk/cmdline-tools
+          cd $HOME/android-sdk
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q commandlinetools-linux-11076708_latest.zip -d $HOME/android-sdk/cmdline-tools
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+          unzip -q commandlinetools-linux-11076708_latest.zip
+          mv cmdline-tools cmdline-tools-temp
+          mkdir -p cmdline-tools && mv cmdline-tools-temp cmdline-tools/latest
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
-          echo "$HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
-          export PATH="$PATH:$HOME/android-sdk/cmdline-tools/latest/bin"
           yes | sdkmanager --licenses >/dev/null 2>&1
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-
-      - name: 🔨 Build Release APK
+          
+      - name: Download & Extract
         run: |
-          cd ${{ env.WORK_DIR }}
+          curl -L "${{ github.event.inputs.source_url }}" -o source.zip
+          unzip -o source.zip
+          cd "${{ github.event.inputs.project_name }}"
           flutter pub get
-          flutter build apk --release --no-tree-shake-icons
-
-      - name: 🚀 Create Release (Download Link)
+          
+      - name: Build APK
+        run: |
+          cd "${{ github.event.inputs.project_name }}"
+          flutter build apk --release
+          
+      - name: Upload Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "📱 APK Result #${{ github.run_number }}"
-          files: "${{ env.WORK_DIR }}/build/app/outputs/flutter-apk/app-release.apk"
+          tag_name: apk-${{ github.run_number }}
+          name: "📱 ${{ github.event.inputs.project_name }} APK"
+          files: "**/build/app/outputs/flutter-apk/app-release.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
