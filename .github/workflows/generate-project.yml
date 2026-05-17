@@ -37,11 +37,22 @@ jobs:
 
       - name: 🏗️ Create Project
         run: |
-          flutter create --platforms=android --org "${{ github.event.inputs.package_name }}" "${{ github.event.inputs.project_name }}"
+          set -e
+          FULL_PKG="${{ github.event.inputs.package_name }}"
+          
+          # Split package: com.example.app → ORG=com.example, PKG_PROJ=app
+          ORG=$(echo "$FULL_PKG" | sed 's/\.[^.]*$//')
+          PKG_PROJ=$(echo "$FULL_PKG" | sed 's/.*\.//')
+          
+          echo "Org: $ORG"
+          echo "Package name: $PKG_PROJ"
+          echo "Folder name: ${{ github.event.inputs.project_name }}"
+          
+          flutter create --org "$ORG" --project-name "$PKG_PROJ" "${{ github.event.inputs.project_name }}"
           cd "${{ github.event.inputs.project_name }}"
           
-          # Hapus main.dart bawaan, ganti dengan template lu
-          cat > lib/main.dart <<EOF
+          # Ganti main.dart dengan template
+          cat > lib/main.dart <<'EOF'
           import 'package:flutter/material.dart';
 
           void main() => runApp(const MyApp());
@@ -52,10 +63,23 @@ jobs:
             Widget build(BuildContext context) {
               return MaterialApp(
                 title: '${{ github.event.inputs.app_name }}',
-                theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Color(${{ github.event.inputs.primary_color }}), useMaterial3: true)),
+                theme: ThemeData(
+                  colorScheme: ColorScheme.fromSeed(
+                    seedColor: Color(${{ github.event.inputs.primary_color }}),
+                    useMaterial3: true,
+                  ),
+                ),
                 home: Scaffold(
-                  app_appBar: AppBar(title: Text('${{ github.event.inputs.app_name }}'), backgroundColor: Color(${{ github.event.inputs.primary_color }})),
-                  body: const Center(child: Text('Build Success!', style: TextStyle(fontSize: 24))),
+                  appBar: AppBar(
+                    title: Text('${{ github.event.inputs.app_name }}'),
+                    backgroundColor: Color(${{ github.event.inputs.primary_color }}),
+                  ),
+                  body: const Center(
+                    child: Text(
+                      'Build Success!',
+                      style: TextStyle(fontSize: 24),
+                    ),
+                  ),
                 ),
               );
             }
@@ -64,6 +88,7 @@ jobs:
 
       - name: 📦 ZIP Project
         run: |
+          set -e
           zip -r "source_code.zip" "${{ github.event.inputs.project_name }}"
 
       - name: 🚀 Release Source
