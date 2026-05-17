@@ -54,7 +54,6 @@ jobs:
           RAW_PROJ="${{ github.event.inputs.project_name }}"
           APP_NAME="${{ github.event.inputs.app_name }}"
           
-          # Sanitasi ke valid Dart package name
           PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
           
           echo "Original: $RAW_PROJ"
@@ -68,7 +67,6 @@ jobs:
             exit 1
           fi
           
-          # Rename folder kalau nama asli tidak valid
           if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then
             mv "$RAW_PROJ" "$PROJ"
           fi
@@ -99,28 +97,41 @@ jobs:
             echo "✅ AndroidManifest.xml label updated to: $APP_NAME"
           fi
           
-          # ========== INJECT CUSTOM ICON ==========
+          # ========== INJECT CUSTOM ICON (VALIDATED) ==========
           USER_ICON="$PROJ/assets/icon.png"
+          MIPMAP_DIR="$PROJ/android/app/src/main/res"
+          
+          mkdir -p "$MIPMAP_DIR/mipmap-mdpi" \
+                   "$MIPMAP_DIR/mipmap-hdpi" \
+                   "$MIPMAP_DIR/mipmap-xhdpi" \
+                   "$MIPMAP_DIR/mipmap-xxhdpi" \
+                   "$MIPMAP_DIR/mipmap-xxxhdpi"
+          
           if [ -f "$USER_ICON" ]; then
-            echo "✅ Custom icon found, injecting to mipmap folders..."
-            MIPMAP_DIR="$PROJ/android/app/src/main/res"
-            mkdir -p "$MIPMAP_DIR/mipmap-mdpi" \
-                     "$MIPMAP_DIR/mipmap-hdpi" \
-                     "$MIPMAP_DIR/mipmap-xhdpi" \
-                     "$MIPMAP_DIR/mipmap-xxhdpi" \
-                     "$MIPMAP_DIR/mipmap-xxxhdpi"
-            
-            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-              cp "$USER_ICON" "$MIPMAP_DIR/mipmap-${density}/ic_launcher.png"
-              echo "  → mipmap-${density}/ic_launcher.png"
-            done
-            echo "✅ Custom icon injected successfully"
+            echo "✅ Custom icon found at assets/icon.png"
+            # VALIDATE PNG: cek header PNG asli (89 50 4E 47)
+            PNG_HEADER=$(xxd -l 4 -p "$USER_ICON")
+            if [ "$PNG_HEADER" = "89504e47" ]; then
+              echo "✅ Valid PNG file detected"
+              # Resize ke berbagai density pake ImageMagick (paling aman)
+              convert "$USER_ICON" -resize 48x48 "$MIPMAP_DIR/mipmap-mdpi/ic_launcher.png"
+              convert "$USER_ICON" -resize 72x72 "$MIPMAP_DIR/mipmap-hdpi/ic_launcher.png"
+              convert "$USER_ICON" -resize 96x96 "$MIPMAP_DIR/mipmap-xhdpi/ic_launcher.png"
+              convert "$USER_ICON" -resize 144x144 "$MIPMAP_DIR/mipmap-xxhdpi/ic_launcher.png"
+              convert "$USER_ICON" -resize 192x192 "$MIPMAP_DIR/mipmap-xxxhdpi/ic_launcher.png"
+              echo "✅ Custom icon injected & resized to all densities"
+            else
+              echo "⚠️ INVALID PNG: header = $PNG_HEADER, using default Flutter icon"
+              # Hapus mipmap biar Flutter regenerate default
+              rm -rf "$MIPMAP_DIR/mipmap-"*
+            fi
           else
-            echo "⚠️ No custom icon found, using default"
+            echo "⚠️ No custom icon found at assets/icon.png, using default Flutter icon"
           fi
           
           echo "Final structure:"
           ls -la "$PROJ"
+          ls -la "$PROJ/android/app/src/main/res/mipmap-mdpi/" 2>/dev/null || echo "No mipmap-mdpi"
           
       - name: Get Dependencies
         run: |
