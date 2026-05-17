@@ -42,6 +42,36 @@ jobs:
           unzip -o source.zip
           ls -la
           
+      - name: Scaffold Flutter Project
+        run: |
+          set -e
+          PROJ="${{ github.event.inputs.project_name }}"
+          
+          echo "Backing up user source..."
+          mv "$PROJ" "${PROJ}_user"
+          
+          echo "Generating fresh Flutter scaffold..."
+          flutter create --platforms=android --project-name "$PROJ" "$PROJ"
+          
+          echo "Removing broken platform folders from user source..."
+          rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
+                 "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
+          
+          echo "Merging user code into scaffold..."
+          # Remove scaffold defaults yang akan di-replace user
+          rm -rf "$PROJ/lib"/*
+          rm -f "$PROJ/pubspec.yaml"
+          rm -rf "$PROJ/assets" 2>/dev/null || true
+          rm -f "$PROJ/test"/* 2>/dev/null || true
+          
+          # Copy user files ke scaffold
+          cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
+          rm -rf "${PROJ}_user"
+          
+          echo "Final project structure:"
+          ls -la "$PROJ"
+          ls -la "$PROJ/android"
+          
       - name: Get Dependencies
         run: |
           set -e
