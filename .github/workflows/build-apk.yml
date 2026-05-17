@@ -42,10 +42,28 @@ jobs:
           unzip -o source.zip
           ls -la
           
-      - name: Scaffold Flutter Project
+      - name: Scaffold & Sanitize Project
+        id: scaffold
         run: |
           set -e
-          PROJ="${{ github.event.inputs.project_name }}"
+          RAW_PROJ="${{ github.event.inputs.project_name }}"
+          
+          # Sanitasi ke valid Dart package name: lowercase, underscore, alphanumeric
+          PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
+          
+          echo "Original: $RAW_PROJ"
+          echo "Sanitized: $PROJ"
+          echo "proj=$PROJ" >> $GITHUB_OUTPUT
+          
+          if [ -z "$PROJ" ]; then
+            echo "::error::Nama project tidak valid setelah sanitasi"
+            exit 1
+          fi
+          
+          # Rename folder kalau nama asli tidak valid
+          if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then
+            mv "$RAW_PROJ" "$PROJ"
+          fi
           
           echo "Backing up user source..."
           mv "$PROJ" "${PROJ}_user"
@@ -53,35 +71,32 @@ jobs:
           echo "Generating fresh Flutter scaffold..."
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
           
-          echo "Removing broken platform folders from user source..."
+          echo "Removing platform folders from user source..."
           rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
                  "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
           
           echo "Merging user code into scaffold..."
-          # Remove scaffold defaults yang akan di-replace user
           rm -rf "$PROJ/lib"/*
           rm -f "$PROJ/pubspec.yaml"
           rm -rf "$PROJ/assets" 2>/dev/null || true
           rm -f "$PROJ/test"/* 2>/dev/null || true
           
-          # Copy user files ke scaffold
           cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
           rm -rf "${PROJ}_user"
           
-          echo "Final project structure:"
+          echo "Final structure:"
           ls -la "$PROJ"
-          ls -la "$PROJ/android"
           
       - name: Get Dependencies
         run: |
           set -e
-          cd "${{ github.event.inputs.project_name }}"
+          cd "${{ steps.scaffold.outputs.proj }}"
           flutter pub get
           
       - name: Build APK
         run: |
           set -e
-          cd "${{ github.event.inputs.project_name }}"
+          cd "${{ steps.scaffold.outputs.proj }}"
           flutter build apk --release
           
       - name: Upload Release
@@ -89,6 +104,6 @@ jobs:
         with:
           tag_name: apk-${{ github.run_number }}
           name: "📱 ${{ github.event.inputs.project_name }} APK"
-          files: "${{ github.event.inputs.project_name }}/build/app/outputs/flutter-apk/app-release.apk"
+          files: "${{ steps.scaffold.outputs.proj }}/build/app/outputs/flutter-apk/app-release.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
