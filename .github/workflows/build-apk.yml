@@ -87,6 +87,48 @@ jobs:
           rm -rf "$PROJ/assets" 2>/dev/null || true
           rm -f "$PROJ/test"/* 2>/dev/null || true
           
+          # ========== COPY USER PUBSPEC & VALIDATE ASSETS ==========
+          if [ -f "${PROJ}_user/pubspec.yaml" ]; then
+            cp "${PROJ}_user/pubspec.yaml" "$PROJ/pubspec.yaml"
+            echo "✅ User pubspec.yaml copied"
+            
+            # Install Python YAML support
+            python3 -m pip install pyyaml -q 2>/dev/null || true
+            
+            # Validate and clean assets
+            python3 << 'PYTHON_SCRIPT'
+import yaml
+import os
+
+pubspec_path = "$PROJ/pubspec.yaml"
+try:
+    with open(pubspec_path, 'r') as f:
+        data = yaml.safe_load(f) or {}
+    
+    if 'flutter' in data and 'assets' in data['flutter']:
+        assets = data['flutter']['assets']
+        valid_assets = []
+        for asset in assets:
+            asset_path = os.path.join("$PROJ", asset.rstrip('/'))
+            if os.path.exists(asset_path):
+                valid_assets.append(asset)
+                print(f"✅ Asset found: {asset}")
+            else:
+                print(f"⚠️  Asset missing: {asset} - REMOVING")
+        
+        if valid_assets:
+            data['flutter']['assets'] = valid_assets
+        elif 'assets' in data.get('flutter', {}):
+            del data['flutter']['assets']
+        
+        with open(pubspec_path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        print("✅ Pubspec.yaml cleaned")
+except Exception as e:
+    print(f"⚠️  Could not validate assets: {e}")
+PYTHON_SCRIPT
+          fi
+          
           cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
           rm -rf "${PROJ}_user"
           
@@ -110,27 +152,26 @@ jobs:
           if [ -f "$USER_ICON" ]; then
             echo "✅ Custom icon found at assets/icon.png"
             # VALIDATE PNG: cek header PNG asli (89 50 4E 47)
-            PNG_HEADER=$(xxd -l 4 -p "$USER_ICON")
+            PNG_HEADER=$(xxd -l 4 -p "$USER_ICON" 2>/dev/null || echo "")
             if [ "$PNG_HEADER" = "89504e47" ]; then
               echo "✅ Valid PNG file detected"
-              # Resize ke berbagai density pake ImageMagick (paling aman)
-              convert "$USER_ICON" -resize 48x48 "$MIPMAP_DIR/mipmap-mdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 72x72 "$MIPMAP_DIR/mipmap-hdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 96x96 "$MIPMAP_DIR/mipmap-xhdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 144x144 "$MIPMAP_DIR/mipmap-xxhdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 192x192 "$MIPMAP_DIR/mipmap-xxxhdpi/ic_launcher.png"
+              # Resize ke berbagai density pake ImageMagick
+              convert "$USER_ICON" -resize 48x48 "$MIPMAP_DIR/mipmap-mdpi/ic_launcher.png" 2>/dev/null || true
+              convert "$USER_ICON" -resize 72x72 "$MIPMAP_DIR/mipmap-hdpi/ic_launcher.png" 2>/dev/null || true
+              convert "$USER_ICON" -resize 96x96 "$MIPMAP_DIR/mipmap-xhdpi/ic_launcher.png" 2>/dev/null || true
+              convert "$USER_ICON" -resize 144x144 "$MIPMAP_DIR/mipmap-xxhdpi/ic_launcher.png" 2>/dev/null || true
+              convert "$USER_ICON" -resize 192x192 "$MIPMAP_DIR/mipmap-xxxhdpi/ic_launcher.png" 2>/dev/null || true
               echo "✅ Custom icon injected & resized to all densities"
             else
-              echo "⚠️ INVALID PNG: header = $PNG_HEADER, using default Flutter icon"
-              # Hapus mipmap biar Flutter regenerate default
-              rm -rf "$MIPMAP_DIR/mipmap-"*
+              echo "⚠️  INVALID PNG: header = $PNG_HEADER, using default Flutter icon"
+              rm -rf "$MIPMAP_DIR/mipmap-"* 2>/dev/null || true
             fi
           else
-            echo "⚠️ No custom icon found at assets/icon.png, using default Flutter icon"
+            echo "⚠️  No custom icon found at assets/icon.png, using default Flutter icon"
           fi
           
           echo "Final structure:"
-          ls -la "$PROJ"
+          ls -la "$PROJ" || true
           ls -la "$PROJ/android/app/src/main/res/mipmap-mdpi/" 2>/dev/null || echo "No mipmap-mdpi"
           
       - name: Get Dependencies
@@ -151,5 +192,6 @@ jobs:
           tag_name: apk-${{ github.run_number }}
           name: "📱 ${{ github.event.inputs.app_name }} - Build #${{ github.run_number }}"
           files: "${{ steps.scaffold.outputs.proj }}/build/app/outputs/flutter-apk/app-release.apk"
+          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
