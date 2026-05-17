@@ -42,17 +42,41 @@ jobs:
           APP="${{ github.event.inputs.app_name }}"
           PROJ=$(echo "$RAW" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
           
-          [ -d "$RAW" ] && mv "$RAW" _user || mv "$PROJ" _user 2>/dev/null || true
+          # Cari folder hasil unzip (bisa nama asli atau nama sanitized)
+          if [ -d "$RAW" ]; then
+            mv "$RAW" _user
+          elif [ -d "$PROJ" ]; then
+            mv "$PROJ" _user
+          else
+            # Kalau zip flat (tanpa folder), buat folder _user dan pindahkan semua
+            mkdir -p _user
+            mv * .* _user/ 2>/dev/null || true
+          fi
+          
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
+          
+          # Hapus platform folder dari user source biar tidak conflict
           rm -rf _user/android _user/ios _user/linux _user/macos _user/windows _user/web 2>/dev/null || true
-          cp -r _user/* "$PROJ"/ 2>/dev/null || true
+          
+          # Copy konten user ke project baru (pakai /. biar hidden files ikut)
+          if [ -d "_user" ]; then
+            cp -r _user/. "$PROJ"/ 2>/dev/null || true
+          fi
           rm -rf _user
           
+          # Generate icon default kalau tidak ada
           mkdir -p "$PROJ/assets"
-          [ ! -f "$PROJ/assets/icon.png" ] && python3 -c "from PIL import Image; Image.new('RGBA',(192,192),(139,92,246,255)).save('$PROJ/assets/icon.png')" 2>/dev/null || true
+          if [ ! -f "$PROJ/assets/icon.png" ]; then
+            python3 -c "from PIL import Image; Image.new('RGBA',(192,192),(139,92,246,255)).save('$PROJ/assets/icon.png')" 2>/dev/null || true
+          fi
           
-          grep -q "assets/icon.png" "$PROJ/pubspec.yaml" || sed -i '/^flutter:/a\  assets:\n    - assets/icon.png' "$PROJ/pubspec.yaml"
-          sed -i "s|android:label="[^"]*"|android:label="$APP"|g" "$PROJ/android/app/src/main/AndroidManifest.xml" 2>/dev/null || true
+          # Tambahkan assets ke pubspec.yaml
+          if ! grep -q "assets/icon.png" "$PROJ/pubspec.yaml"; then
+            sed -i '/^flutter:/a\  assets:\n    - assets/icon.png' "$PROJ/pubspec.yaml"
+          fi
+          
+          # FIX KUTIP: pakai single-quote + break out untuk variable expansion
+          sed -i 's|android:label="[^"]*"|android:label="'"$APP"'"|g' "$PROJ/android/app/src/main/AndroidManifest.xml" 2>/dev/null || true
           
           cd "$PROJ"
           flutter pub get
