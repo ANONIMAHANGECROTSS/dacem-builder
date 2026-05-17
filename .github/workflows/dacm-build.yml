@@ -36,48 +36,73 @@ jobs:
       - name: Download & Build
         run: |
           set -e
+          
+          # 1. Download & unzip
           curl -L -o src.zip "${{ github.event.inputs.source_url }}"
           unzip -o src.zip
+          
           RAW="${{ github.event.inputs.project_name }}"
           APP="${{ github.event.inputs.app_name }}"
           PROJ=$(echo "$RAW" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
+          [ -z "$PROJ" ] && PROJ="dacm_app"
           
-          # Cari folder hasil unzip (bisa nama asli atau nama sanitized)
+          # 2. Pindahkan source user ke folder _user (handle ZIP bertingkat maupun flat)
           if [ -d "$RAW" ]; then
             mv "$RAW" _user
           elif [ -d "$PROJ" ]; then
             mv "$PROJ" _user
           else
-            # Kalau zip flat (tanpa folder), buat folder _user dan pindahkan semua
             mkdir -p _user
-            mv * .* _user/ 2>/dev/null || true
+            find . -maxdepth 1 \
+              -not -name '_user' \
+              -not -name 'src.zip' \
+              -not -name '.' \
+              -not -name '..' \
+              -exec mv {} _user/ \;
           fi
           
+          # 3. Buat project Flutter baru
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
           
-          # Hapus platform folder dari user source biar tidak conflict
+          # 4. Hapus platform folder dari source user biar tidak conflict
           rm -rf _user/android _user/ios _user/linux _user/macos _user/windows _user/web 2>/dev/null || true
           
-          # Copy konten user ke project baru (pakai /. biar hidden files ikut)
+          # 5. Copy source user ke project baru
           if [ -d "_user" ]; then
             cp -r _user/. "$PROJ"/ 2>/dev/null || true
           fi
           rm -rf _user
           
-          # Generate icon default kalau tidak ada
-          mkdir -p "$PROJ/assets"
-          if [ ! -f "$PROJ/assets/icon.png" ]; then
-            python3 -c "from PIL import Image; Image.new('RGBA',(192,192),(139,92,246,255)).save('$PROJ/assets/icon.png')" 2>/dev/null || true
+          # 6. HANYA tambahkan asset ke pubspec KALAU file icon benar-benar ada
+          if [ -f "$PROJ/assets/icon.png" ]; then
+            echo "✅ Icon ditemukan, menambahkan ke pubspec..."
+            python3 -c "
+import sys
+with open('$PROJ/pubspec.yaml', 'r') as f:
+    content = f.read()
+
+if 'assets/icon.png' not in content:
+    if 'uses-material-design: true' in content:
+        content = content.replace(
+            'uses-material-design: true',
+            'uses-material-design: true\n  assets:\n    - assets/icon.png'
+        )
+    elif 'flutter:' in content:
+        content = content.replace(
+            'flutter:\n',
+            'flutter:\n  assets:\n    - assets/icon.png\n'
+        )
+    with open('$PROJ/pubspec.yaml', 'w') as f:
+        f.write(content)
+"
+          else
+            echo "ℹ️  Tidak ada assets/icon.png, melewati penambahan asset."
           fi
           
-          # Tambahkan assets ke pubspec.yaml
-          if ! grep -q "assets/icon.png" "$PROJ/pubspec.yaml"; then
-            sed -i '/^flutter:/a\  assets:\n    - assets/icon.png' "$PROJ/pubspec.yaml"
-          fi
-          
-          # FIX KUTIP: pakai single-quote + break out untuk variable expansion
+          # 7. Update app name di AndroidManifest
           sed -i 's|android:label="[^"]*"|android:label="'"$APP"'"|g' "$PROJ/android/app/src/main/AndroidManifest.xml" 2>/dev/null || true
           
+          # 8. Build
           cd "$PROJ"
           flutter pub get
           flutter build apk --release
