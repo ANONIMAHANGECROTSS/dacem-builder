@@ -42,7 +42,6 @@ jobs:
       - name: Download & Extract Source
         run: |
           set -e
-          echo "Downloading from: ${{ github.event.inputs.source_url }}"
           curl -L -o source.zip "${{ github.event.inputs.source_url }}"
           unzip -o source.zip
           ls -la
@@ -53,152 +52,56 @@ jobs:
           set -e
           RAW_PROJ="${{ github.event.inputs.project_name }}"
           APP_NAME="${{ github.event.inputs.app_name }}"
-          
           PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
-          
-          echo "Original: $RAW_PROJ"
-          echo "Sanitized: $PROJ"
-          echo "App Name: $APP_NAME"
           echo "proj=$PROJ" >> $GITHUB_OUTPUT
           echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
           
-          if [ -z "$PROJ" ]; then
-            echo "::error::Nama project tidak valid setelah sanitasi"
-            exit 1
-          fi
+          if [ -z "$PROJ" ]; then echo "::error::Invalid project name"; exit 1; fi
+          if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then mv "$RAW_PROJ" "$PROJ"; fi
           
-          if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then
-            mv "$RAW_PROJ" "$PROJ"
-          fi
-          
-          echo "Backing up user source..."
           mv "$PROJ" "${PROJ}_user"
-          
-          echo "Generating fresh Flutter scaffold..."
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
           
-          echo "Removing platform folders from user source..."
-          rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
-                 "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
+          rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
           
-          echo "=== MERGE USER CODE ==="
-          # Copy SEMUA dari user dulu
           cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
           rm -rf "${PROJ}_user"
           
-          # ========== VERIFIKASI ASSETS ==========
-          echo "=== VERIFIKASI ASSETS ==="
-          if [ -f "$PROJ/assets/icon.png" ]; then
-            echo "✅ assets/icon.png FOUND (size: $(stat -c%s $PROJ/assets/icon.png) bytes)"
-          else
-            echo "⚠️ assets/icon.png NOT FOUND — creating dummy"
-            mkdir -p "$PROJ/assets"
-            # Generate a simple 1x1 purple PNG as fallback (valid PNG bytes)
+          # Fix assets
+          mkdir -p "$PROJ/assets"
+          if [ ! -f "$PROJ/assets/icon.png" ]; then
             printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82' > "$PROJ/assets/icon.png"
-            echo "  → Created fallback 1x1 purple PNG"
           fi
           
-          # ========== VERIFIKASI PUBSPEC ==========
-          echo "=== VERIFIKASI PUBSPEC ==="
-          if [ -f "$PROJ/pubspec.yaml" ]; then
-            echo "✅ pubspec.yaml FOUND"
-            cat "$PROJ/pubspec.yaml" | head -20
-          else
-            echo "❌ pubspec.yaml MISSING — generating"
-            cat > "$PROJ/pubspec.yaml" << 'PUBEOF'
-name: app
-description: A new Flutter project.
-publish_to: 'none'
-version: 1.0.0+1
-
-environment:
-  sdk: '>=3.0.0 <4.0.0'
-
-dependencies:
-  flutter:
-    sdk: flutter
-  cupertino_icons: ^1.0.6
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-
-flutter:
-  uses-material-design: true
-  assets:
-    - assets/icon.png
-PUBEOF
-          fi
-          
-          # ========== PASTIKAN ASSETS ADA DI PUBSPEC ==========
+          # Fix pubspec
           if ! grep -q "assets/icon.png" "$PROJ/pubspec.yaml"; then
-            echo "⚠️ assets/icon.png not in pubspec — adding..."
-            # Tambahkan assets section kalau belum ada
-            if grep -q "^flutter:" "$PROJ/pubspec.yaml"; then
-              if grep -q "assets:" "$PROJ/pubspec.yaml"; then
-                sed -i "/assets:/a\    - assets/icon.png" "$PROJ/pubspec.yaml"
-              else
-                sed -i "/^flutter:/a\  assets:\n    - assets/icon.png" "$PROJ/pubspec.yaml"
-              fi
+            if grep -q "assets:" "$PROJ/pubspec.yaml"; then
+              sed -i "/assets:/a\    - assets/icon.png" "$PROJ/pubspec.yaml"
+            else
+              sed -i "/^flutter:/a\  assets:\n    - assets/icon.png" "$PROJ/pubspec.yaml"
             fi
           fi
           
-          echo "=== FINAL PUBSPEC ==="
-          cat "$PROJ/pubspec.yaml"
+          # Inject app name
+          sed -i "s|android:label="[^"]*"|android:label="$APP_NAME"|g" "$PROJ/android/app/src/main/AndroidManifest.xml"
           
-          # ========== INJECT APP NAME KE MANIFEST ==========
-          MANIFEST="$PROJ/android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i "s|android:label=\"[^\"]*\"|android:label=\"$APP_NAME\"|g" "$MANIFEST"
-            echo "✅ AndroidManifest label = $APP_NAME"
-          fi
-          
-          # ========== INJECT CUSTOM ICON KE MIPMAP ==========
+          # Inject icon to mipmap
           USER_ICON="$PROJ/assets/icon.png"
           MIPMAP_DIR="$PROJ/android/app/src/main/res"
-          
-          mkdir -p "$MIPMAP_DIR/mipmap-mdpi" \
-                   "$MIPMAP_DIR/mipmap-hdpi" \
-                   "$MIPMAP_DIR/mipmap-xhdpi" \
-                   "$MIPMAP_DIR/mipmap-xxhdpi" \
-                   "$MIPMAP_DIR/mipmap-xxxhdpi"
-          
+          mkdir -p "$MIPMAP_DIR"/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}
           if [ -f "$USER_ICON" ]; then
-            PNG_HEADER=$(xxd -l 4 -p "$USER_ICON")
-            if [ "$PNG_HEADER" = "89504e47" ]; then
-              echo "✅ Valid PNG — resizing to mipmap densities..."
-              convert "$USER_ICON" -resize 48x48 "$MIPMAP_DIR/mipmap-mdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 72x72 "$MIPMAP_DIR/mipmap-hdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 96x96 "$MIPMAP_DIR/mipmap-xhdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 144x144 "$MIPMAP_DIR/mipmap-xxhdpi/ic_launcher.png"
-              convert "$USER_ICON" -resize 192x192 "$MIPMAP_DIR/mipmap-xxxhdpi/ic_launcher.png"
-              echo "✅ Icon injected to all densities"
-            else
-              echo "⚠️ Invalid PNG header: $PNG_HEADER — skipping mipmap inject"
-            fi
+            convert "$USER_ICON" -resize 48x48 "$MIPMAP_DIR/mipmap-mdpi/ic_launcher.png"
+            convert "$USER_ICON" -resize 72x72 "$MIPMAP_DIR/mipmap-hdpi/ic_launcher.png"
+            convert "$USER_ICON" -resize 96x96 "$MIPMAP_DIR/mipmap-xhdpi/ic_launcher.png"
+            convert "$USER_ICON" -resize 144x144 "$MIPMAP_DIR/mipmap-xxhdpi/ic_launcher.png"
+            convert "$USER_ICON" -resize 192x192 "$MIPMAP_DIR/mipmap-xxxhdpi/ic_launcher.png"
           fi
           
-          echo "=== FINAL STRUCTURE ==="
-          ls -la "$PROJ/"
-          ls -la "$PROJ/assets/" 2>/dev/null || echo "No assets folder"
-          ls -la "$PROJ/android/app/src/main/res/mipmap-mdpi/" 2>/dev/null || echo "No mipmap-mdpi"
-          
       - name: Get Dependencies
-        run: |
-          set -e
-          cd "${{ steps.scaffold.outputs.proj }}"
-          echo "=== PUBSPEC.YAML ==="
-          cat pubspec.yaml
-          echo "=== ASSETS ==="
-          ls -la assets/ 2>/dev/null || echo "NO ASSETS FOLDER"
-          flutter pub get
+        run: cd "${{ steps.scaffold.outputs.proj }}" && flutter pub get
           
       - name: Build APK
-        run: |
-          set -e
-          cd "${{ steps.scaffold.outputs.proj }}"
-          flutter build apk --release
+        run: cd "${{ steps.scaffold.outputs.proj }}" && flutter build apk --release
           
       - name: Upload Release
         uses: softprops/action-gh-release@v1
