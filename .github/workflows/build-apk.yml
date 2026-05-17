@@ -11,6 +11,11 @@ on:
         description: '📁 Nama Project Folder (di dalam ZIP)'
         required: true
         type: string
+      app_name:
+        description: '📱 Nama Aplikasi (Display Name)'
+        required: false
+        type: string
+        default: 'DACM App'
 
 permissions:
   contents: write
@@ -47,13 +52,16 @@ jobs:
         run: |
           set -e
           RAW_PROJ="${{ github.event.inputs.project_name }}"
+          APP_NAME="${{ github.event.inputs.app_name }}"
           
           # Sanitasi ke valid Dart package name: lowercase, underscore, alphanumeric
           PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
           
           echo "Original: $RAW_PROJ"
           echo "Sanitized: $PROJ"
+          echo "App Name: $APP_NAME"
           echo "proj=$PROJ" >> $GITHUB_OUTPUT
+          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
           
           if [ -z "$PROJ" ]; then
             echo "::error::Nama project tidak valid setelah sanitasi"
@@ -71,6 +79,16 @@ jobs:
           echo "Generating fresh Flutter scaffold..."
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
           
+          echo "Backing up user android resources (mipmap, manifest)..."
+          # SIMPAN dulu resource Android dari user sebelum dihapus
+          USER_ANDROID_RES="${PROJ}_user/android/app/src/main/res"
+          if [ -d "$USER_ANDROID_RES" ]; then
+            echo "Found user android resources:"
+            ls -la "$USER_ANDROID_RES"
+          else
+            echo "No user android resources found"
+          fi
+          
           echo "Removing platform folders from user source..."
           rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
                  "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
@@ -84,8 +102,75 @@ jobs:
           cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
           rm -rf "${PROJ}_user"
           
+          # ========== INJECT CUSTOM ICON & APP NAME ==========
+          echo "Injecting custom app name & icon into Android project..."
+          
+          # 1. Update AndroidManifest.xml dengan nama aplikasi custom
+          MANIFEST="$PROJ/android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            # Ganti android:label dengan nama aplikasi yang diinginkan
+            sed -i "s|android:label=\"[^\"]*\"|android:label=\"$APP_NAME\"|g" "$MANIFEST"
+            echo "✅ AndroidManifest.xml label updated to: $APP_NAME"
+          else
+            echo "⚠️ AndroidManifest.xml not found, creating..."
+            mkdir -p "$PROJ/android/app/src/main"
+            cat > "$MANIFEST" << 'MANIFESTEOF'
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.app">
+    <application
+        android:label="APP_NAME_PLACEHOLDER"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+</manifest>
+MANIFESTEOF
+            sed -i "s|APP_NAME_PLACEHOLDER|$APP_NAME|g" "$MANIFEST"
+          fi
+          
+          # 2. Inject custom icon mipmap (dari assets/icon.png)
+          USER_ICON="$PROJ/assets/icon.png"
+          if [ -f "$USER_ICON" ]; then
+            echo "✅ Custom icon found at assets/icon.png, injecting to mipmap folders..."
+            MIPMAP_DIR="$PROJ/android/app/src/main/res"
+            mkdir -p "$MIPMAP_DIR/mipmap-mdpi" \
+                     "$MIPMAP_DIR/mipmap-hdpi" \
+                     "$MIPMAP_DIR/mipmap-xhdpi" \
+                     "$MIPMAP_DIR/mipmap-xxhdpi" \
+                     "$MIPMAP_DIR/mipmap-xxxhdpi"
+            
+            # Copy icon ke semua density (pakai icon yang sama untuk semua)
+            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+              cp "$USER_ICON" "$MIPMAP_DIR/mipmap-${density}/ic_launcher.png"
+              echo "  → mipmap-${density}/ic_launcher.png"
+            done
+            echo "✅ Custom icon injected successfully"
+          else
+            echo "⚠️ No custom icon found at assets/icon.png, using default Flutter icon"
+          fi
+          
           echo "Final structure:"
           ls -la "$PROJ"
+          ls -la "$PROJ/android/app/src/main/res/" 2>/dev/null || echo "No res folder"
           
       - name: Get Dependencies
         run: |
@@ -103,7 +188,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: apk-${{ github.run_number }}
-          name: "📱 ${{ github.event.inputs.project_name }} APK"
+          name: "📱 ${{ github.event.inputs.app_name }} - Build #${{ github.run_number }}"
           files: "${{ steps.scaffold.outputs.proj }}/build/app/outputs/flutter-apk/app-release.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
