@@ -60,7 +60,6 @@ jobs:
             exit 1
           fi
           
-          # Rename folder kalau nama asli tidak valid
           if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then
             mv "$RAW_PROJ" "$PROJ"
           fi
@@ -71,9 +70,9 @@ jobs:
           echo "Generating fresh Flutter scaffold..."
           flutter create --platforms=android --project-name "$PROJ" "$PROJ"
           
-          echo "Removing platform folders from user source..."
-          rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
-                 "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
+          # PERUBAHAN PENTING: JANGAN HAPUS "android" DARI USER_SOURCE BIAR ICON & MANIFEST GAK HILANG!!!
+          echo "Removing unused platform folders from user source..."
+          rm -rf "${PROJ}_user/ios" "${PROJ}_user/linux" "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
           
           echo "Merging user code into scaffold..."
           rm -rf "$PROJ/lib"/*
@@ -81,6 +80,7 @@ jobs:
           rm -rf "$PROJ/assets" 2>/dev/null || true
           rm -f "$PROJ/test"/* 2>/dev/null || true
           
+          # Timpa folder android bawaan dart scaffold pakai folder android buatan HTML (yg isi Icon dan AndroidManifest)
           cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
           rm -rf "${PROJ}_user"
           
