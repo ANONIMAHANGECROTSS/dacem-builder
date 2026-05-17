@@ -1,0 +1,109 @@
+name: 🚀 DACM Build APK from Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: '📦 URL ZIP Source Project'
+        required: true
+        type: string
+      project_name:
+        description: '📁 Nama Project Folder (di dalam ZIP)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.24.3'
+          cache: true
+          
+      - name: Download & Extract Source
+        run: |
+          set -e
+          echo "Downloading from: ${{ github.event.inputs.source_url }}"
+          curl -L -o source.zip "${{ github.event.inputs.source_url }}"
+          unzip -o source.zip
+          ls -la
+          
+      - name: Scaffold & Sanitize Project
+        id: scaffold
+        run: |
+          set -e
+          RAW_PROJ="${{ github.event.inputs.project_name }}"
+          
+          # Sanitasi ke valid Dart package name: lowercase, underscore, alphanumeric
+          PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | tr ' -' '_' | tr -cd 'a-z0-9_')
+          
+          echo "Original: $RAW_PROJ"
+          echo "Sanitized: $PROJ"
+          echo "proj=$PROJ" >> $GITHUB_OUTPUT
+          
+          if [ -z "$PROJ" ]; then
+            echo "::error::Nama project tidak valid setelah sanitasi"
+            exit 1
+          fi
+          
+          # Rename folder kalau nama asli tidak valid
+          if [ "$RAW_PROJ" != "$PROJ" ] && [ -d "$RAW_PROJ" ]; then
+            mv "$RAW_PROJ" "$PROJ"
+          fi
+          
+          echo "Backing up user source..."
+          mv "$PROJ" "${PROJ}_user"
+          
+          echo "Generating fresh Flutter scaffold..."
+          flutter create --platforms=android --project-name "$PROJ" "$PROJ"
+          
+          echo "Removing platform folders from user source..."
+          rm -rf "${PROJ}_user/android" "${PROJ}_user/ios" "${PROJ}_user/linux" \
+                 "${PROJ}_user/macos" "${PROJ}_user/windows" "${PROJ}_user/web" 2>/dev/null || true
+          
+          echo "Merging user code into scaffold..."
+          rm -rf "$PROJ/lib"/*
+          rm -f "$PROJ/pubspec.yaml"
+          rm -rf "$PROJ/assets" 2>/dev/null || true
+          rm -f "$PROJ/test"/* 2>/dev/null || true
+          
+          cp -r "${PROJ}_user"/* "$PROJ"/ 2>/dev/null || true
+          rm -rf "${PROJ}_user"
+          
+          echo "Final structure:"
+          ls -la "$PROJ"
+          
+      - name: Get Dependencies
+        run: |
+          set -e
+          cd "${{ steps.scaffold.outputs.proj }}"
+          flutter pub get
+          
+      - name: Build APK
+        run: |
+          set -e
+          cd "${{ steps.scaffold.outputs.proj }}"
+          flutter build apk --release
+          
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: "📱 ${{ github.event.inputs.project_name }} APK"
+          files: "${{ steps.scaffold.outputs.proj }}/build/app/outputs/flutter-apk/app-release.apk"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
