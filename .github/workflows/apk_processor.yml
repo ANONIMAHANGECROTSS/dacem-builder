@@ -1,0 +1,57 @@
+name: APK Processor Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'URL direct ke file APK'
+        required: true
+      level:
+        description: 'Level pemrosesan (HARD, MEDIUM, LOW)'
+        required: true
+        default: 'MEDIUM'
+
+jobs:
+  process-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Android Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zipalign apksigner
+          wget https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O apktool.jar
+          chmod +x apktool.jar
+
+      - name: Download Target APK
+        run: wget "${{ github.event.inputs.apk_url }}" -O target.apk
+
+      - name: Decompile APK
+        run: java -jar apktool.jar d target.apk -o decompiled_workspace
+
+      - name: Run KEVINS CORE Python Script
+        run: python kevins_core.py decompiled_workspace ${{ github.event.inputs.level }}
+
+      - name: Recompile APK
+        run: java -jar apktool.jar b decompiled_workspace -o output_unsigned.apk
+
+      - name: Zipalign & Sign APK
+        run: |
+          zipalign -v -p 4 output_unsigned.apk output_aligned.apk
+          keytool -genkey -v -keystore temp.keystore -alias temp_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass kevins123 -keypass kevins123 -dname "CN=Kevins, OU=ID, O=Enc, L=JKT, S=JKT, C=ID"
+          apksigner sign --ks temp.keystore --ks-pass pass:kevins123 output_aligned.apk
+          mv output_aligned.apk Kevins_Protected.apk
+
+      - name: Upload Protected APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: KEVINS_ENCRYPTED_APK
+          path: Kevins_Protected.apk
